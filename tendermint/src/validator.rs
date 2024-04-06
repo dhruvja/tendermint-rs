@@ -17,6 +17,38 @@ use crate::{
     vote, Error, PublicKey, Signature,
 };
 
+#[derive(Default)]
+pub struct CustomHash(pub [u8; 32]);
+
+impl Sha256 for CustomHash {
+    fn digest(
+        data: impl AsRef<[u8]>,
+    ) -> [u8; merkle::HASH_SIZE] {
+        let hash = lib::hash::CryptoHash::digest(data.as_ref());
+        hash.0
+    }
+}
+
+impl MerkleHash for CustomHash {
+    fn empty_hash(&mut self) -> merkle::Hash {
+        CustomHash::digest(&[])
+    }
+
+    fn leaf_hash(&mut self, bytes: &[u8]) -> merkle::Hash {
+        CustomHash::digest([[0x00].as_ref(), bytes].concat())
+    }
+
+    fn inner_hash(
+        &mut self,
+        left: merkle::Hash,
+        right: merkle::Hash,
+    ) -> merkle::Hash {
+        CustomHash::digest(
+            [[0x01].as_ref(), left.as_ref(), right.as_ref()].concat(),
+        )
+    }
+}
+
 /// Validator set contains a vector of validators
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "RawValidatorSet")]
@@ -124,7 +156,7 @@ impl Set {
     /// Compute the hash of this validator set.
     #[cfg(feature = "rust-crypto")]
     pub fn hash(&self) -> Hash {
-        self.hash_with::<crate::crypto::default::Sha256>()
+        self.hash_with::<CustomHash>()
     }
 
     /// Hash this header with a SHA256 hasher provided by a crypto provider.
