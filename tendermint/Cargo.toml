@@ -56,7 +56,7 @@ lib = { git = "https://github.com/composableFi/emulated-light-client", default-f
 
 [features]
 default = ["std", "rust-crypto"]
-std = ["flex-error/std", "flex-error/eyre_tracer", "clock"]
+std = ["flex-error/std", "clock"]
 clock = ["time/std"]
 secp256k1 = ["k256", "ripemd"]
 rust-crypto = ["sha2", "ed25519-consensus"]
