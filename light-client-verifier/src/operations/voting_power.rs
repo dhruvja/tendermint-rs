@@ -17,6 +17,9 @@ use crate::{
     types::{Commit, SignedHeader, TrustThreshold, ValidatorSet},
 };
 
+use alloc::format;
+use tendermint_proto::Protobuf;
+
 /// Tally for the voting power computed by the `VotingPowerCalculator`
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize, Eq)]
 pub struct VotingPowerTally {
@@ -135,6 +138,8 @@ impl<V: signature::Verifier> VotingPowerCalculator for ProvidedVotingPowerCalcul
         let mut tallied_voting_power = 0_u64;
         let mut seen_validators = HashSet::new();
 
+        // solana_program::msg!("Before non absent");
+        // solana_program::log::sol_log_compute_units();
         // Get non-absent votes from the signatures
         let non_absent_votes = signatures.iter().enumerate().flat_map(|(idx, signature)| {
             non_absent_vote(
@@ -144,9 +149,39 @@ impl<V: signature::Verifier> VotingPowerCalculator for ProvidedVotingPowerCalcul
             )
             .map(|vote| (signature, vote))
         });
+        // solana_program::log::sol_log_compute_units();
+        // solana_program::msg!("After non absent");
 
+        // solana_program::msg!("Before Linear map");
+        // solana_program::log::sol_log_compute_units();
+        let mut validator_map = alloc::collections::BTreeMap::new();
+        validator_set.validators().iter().for_each(|val| {
+            validator_map.insert(val.address, val);
+        });
+
+        // solana_program::log::sol_log_compute_units();
+        // solana_program::msg!("After Linear map");
+
+        let mut index = 0;
+        let timestamp_length = 12;
+        let mut signed_bytes: Vec<u8> = Vec::new();
+        let mut start = 0;
         for (signature, vote) in non_absent_votes {
+            if index == 0 {
+                solana_program::msg!("At begining");
+                solana_program::log::sol_log_compute_units();
+            }
+            if index == 1 {
+                solana_program::msg!("At end of first iter");
+                solana_program::log::sol_log_compute_units();
+            }
+            if index == 2 {
+                solana_program::msg!("At end of second iter");
+                solana_program::log::sol_log_compute_units();
+            }
             // Ensure we only count a validator's power once
+            // solana_program::msg!("Before contains");
+            // solana_program::log::sol_log_compute_units();
             if seen_validators.contains(&vote.validator_address) {
                 return Err(VerificationError::duplicate_validator(
                     vote.validator_address,
@@ -154,25 +189,72 @@ impl<V: signature::Verifier> VotingPowerCalculator for ProvidedVotingPowerCalcul
             } else {
                 seen_validators.insert(vote.validator_address);
             }
+            // solana_program::log::sol_log_compute_units();
+            // solana_program::msg!("After contains");
 
-            let validator = match validator_set.validator(vote.validator_address) {
-                Some(validator) => validator,
-                None => continue, // Cannot find matching validator, so we skip the vote
+            let validator = if index == 1 {
+                // solana_program::msg!("Before validator");
+                // solana_program::log::sol_log_compute_units();
+                let validator = match validator_map.get(&vote.validator_address) {
+                    Some(validator) => validator.clone(),
+                    None => continue, // Cannot find matching validator, so we skip the vote
+                };
+                // solana_program::log::sol_log_compute_units();
+                // solana_program::msg!("After find validator");
+                validator
+            } else {
+                match validator_map.get(&vote.validator_address) {
+                    Some(validator) => validator.clone(),
+                    None => continue, // Cannot find matching validator, so we skip the vote
+                }
             };
 
+            // solana_program::msg!("Before signed vote");
+            // solana_program::log::sol_log_compute_units();
             let signed_vote =
                 SignedVote::from_vote(vote.clone(), signed_header.header.chain_id.clone())
                     .ok_or_else(VerificationError::missing_signature)?;
 
+            let timestamp = signed_vote.vote.timestamp.unwrap().encode_vec();
+
+            // solana_program::msg!("This is signed vote {:?}", signed_vote);
+            // solana_program::log::sol_log_compute_units();
+            // solana_program::msg!("After signed vote");
+
+            // solana_program::msg!("Before sign bytes");
+            // solana_program::log::sol_log_compute_units();
             // Check vote is valid
-            let sign_bytes = signed_vote.sign_bytes();
+            let sign_bytes = if index == 0 {
+                signed_bytes = signed_vote.sign_bytes();
+                for i in 0..signed_bytes.len() {
+                    let slice = &signed_bytes[i..(i+timestamp_length)];
+                    if slice == timestamp {
+                        solana_program::msg!("Found start point");
+                        start = i;
+                        break;
+                    }
+                    if (i + timestamp_length) == (signed_bytes.len()) {
+                        panic!("Didnt find the endpoint");
+                    }
+                }
+                signed_bytes.clone()
+            } else {
+               signed_bytes[start..(start + timestamp_length)].copy_from_slice(timestamp.as_slice()); 
+               signed_bytes.clone()
+            };
+            // solana_program::msg!("This is length of timestamp {:?}", timestamp);
+
+            // solana_program::log::sol_log_compute_units();
+            // solana_program::msg!("After sign bytes");
+            // solana_program::msg!("This is signed bytes {:?}", sign_bytes);
+
             if validator
                 .verify_signature::<V>(&sign_bytes, signed_vote.signature())
                 .is_err()
             {
                 return Err(VerificationError::invalid_signature(
                     signed_vote.signature().as_bytes().to_vec(),
-                    Box::new(validator),
+                    Box::new(validator.clone()),
                     sign_bytes,
                 ));
             }
@@ -187,6 +269,7 @@ impl<V: signature::Verifier> VotingPowerCalculator for ProvidedVotingPowerCalcul
 
             // TODO: Break out of the loop when we have enough voting power.
             // See https://github.com/informalsystems/tendermint-rs/issues/235
+            index += 1;
         }
 
         let voting_power = VotingPowerTally {
